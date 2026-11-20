@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable,
   ScrollView, StatusBar, StyleSheet, Text, TextInput, View
@@ -15,22 +16,22 @@ const C = { blue:'#2563EB', pale:'#EFF6FF', bg:'#F5F7FB', ink:'#172033', muted:'
 const emptyForm = { first_name:'', last_name:'', phone:'', email:'', address:'', company:'', job_title:'', notes:'', favorite:false, group_id:null };
 const initials = c => ((c.first_name?.[0] || '') + (c.last_name?.[0] || '')).toUpperCase() || '?';
 
-function Action({ icon, label, onPress, tint=C.blue }) {
-  return <Pressable onPress={onPress} style={s.action}><View style={[s.actionIcon,{backgroundColor:tint+'15'}]}><Ionicons name={icon} size={20} color={tint}/></View><Text style={s.actionText}>{label}</Text></Pressable>;
+function Action({ icon, label, onPress, tint=C.blue, styles }) {
+  return <Pressable onPress={onPress} style={styles.action}><View style={[styles.actionIcon,{backgroundColor:tint+'15'}]}><Ionicons name={icon} size={20} color={tint}/></View><Text style={styles.actionText}>{label}</Text></Pressable>;
 }
-function ContactRow({ item, onPress, onFavorite }) {
-  return <Pressable style={s.contactRow} onPress={onPress}>
-    <View style={s.avatar}><Text style={s.avatarText}>{initials(item)}</Text></View>
-    <View style={{flex:1}}><Text style={s.contactName}>{item.first_name} {item.last_name}</Text><Text style={s.contactSub}>{item.phone || item.email || 'No phone or email'}</Text></View>
+function ContactRow({ item, onPress, onFavorite, styles }) {
+  return <Pressable style={styles.contactRow} onPress={onPress}>
+    <View style={styles.avatar}><Text style={styles.avatarText}>{initials(item)}</Text></View>
+    <View style={{flex:1}}><Text style={styles.contactName}>{item.first_name} {item.last_name}</Text><Text style={styles.contactSub}>{item.phone || item.email || 'No phone or email'}</Text></View>
     <Pressable hitSlop={12} onPress={onFavorite}><Ionicons name={item.favorite ? 'heart' : 'heart-outline'} size={22} color={item.favorite ? '#EF476F' : '#9AA3B2'}/></Pressable>
     <Ionicons name="chevron-forward" size={18} color="#AAB2C0" style={{marginLeft:10}}/>
   </Pressable>;
 }
-function Field({ label, value, onChangeText, placeholder, keyboardType, multiline }) {
-  return <View style={s.field}><Text style={s.label}>{label}</Text><TextInput value={value} onChangeText={onChangeText} placeholder={placeholder || label} placeholderTextColor="#AAB2C0" keyboardType={keyboardType || 'default'} multiline={multiline} style={[s.input,multiline && {height:88,textAlignVertical:'top'}]}/></View>;
+function Field({ label, value, onChangeText, placeholder, keyboardType, multiline, styles }) {
+  return <View style={styles.field}><Text style={styles.label}>{label}</Text><TextInput value={value} onChangeText={onChangeText} placeholder={placeholder || label} placeholderTextColor="#AAB2C0" keyboardType={keyboardType || 'default'} multiline={multiline} style={[styles.input,multiline && {height:88,textAlignVertical:'top'}]}/></View>;
 }
-function PrimaryButton({ title, onPress, icon='checkmark', danger=false }) {
-  return <Pressable onPress={onPress} style={[s.primaryButton,danger && {backgroundColor:C.red}]}><Ionicons name={icon} size={18} color="white"/><Text style={s.primaryText}>{title}</Text></Pressable>;
+function PrimaryButton({ title, onPress, icon='checkmark', danger=false, styles }) {
+  return <Pressable onPress={onPress} style={[styles.primaryButton,danger && {backgroundColor:C.red}]}><Ionicons name={icon} size={18} color="white"/><Text style={styles.primaryText}>{title}</Text></Pressable>;
 }
 
 export default function App() {
@@ -47,6 +48,11 @@ export default function App() {
   const [groupName,setGroupName] = useState('');
   const [editingGroupId,setEditingGroupId] = useState(null);
   const [sortRecent,setSortRecent] = useState(false);
+  const [darkMode,setDarkMode] = useState(false);
+  const palette = darkMode ? {...C, bg:'#101827', white:'#1B2638', ink:'#F3F6FC', muted:'#A6B1C2', line:'#334155', pale:'#263B59'} : C;
+  const s = useMemo(() => createStyles(palette), [darkMode]);
+  useEffect(() => { AsyncStorage.getItem('contact-manager-theme').then(value => setDarkMode(value === 'dark')).catch(()=>{}); }, []);
+  useEffect(() => { AsyncStorage.setItem('contact-manager-theme', darkMode ? 'dark' : 'light').catch(()=>{}); }, [darkMode]);
 
   const refresh = async () => {
     try {
@@ -106,8 +112,8 @@ export default function App() {
   const heading = tab==='Home' ? 'Your contacts' : tab;
   const showList = ['Home','Contacts','Favorites'].includes(tab);
 
-  return <SafeAreaView style={s.safe}>
-    <ExpoStatusBar style="dark"/><StatusBar barStyle="dark-content" backgroundColor={C.bg}/>
+  return <SafeAreaView style={[s.safe,{backgroundColor:palette.bg}]}>
+    <ExpoStatusBar style={darkMode ? "light" : "dark"}/><StatusBar barStyle={darkMode ? "light-content" : "dark-content"} backgroundColor={palette.bg}/>
     <View style={s.header}>
       <View><Text style={s.eyebrow}>CONTACT MANAGER</Text><Text style={s.title}>{heading}</Text></View>
       <Pressable style={s.headerAdd} onPress={openNew}><Ionicons name="person-add" size={21} color="white"/></Pressable>
@@ -120,14 +126,14 @@ export default function App() {
         <Pressable onPress={()=>setSortRecent(v=>!v)} style={s.chip}><Text style={s.chipText}>{sortRecent?'Recently added':'A–Z'}</Text></Pressable>
       </View>
       {tab==='Home' && <View style={s.summary}><View><Text style={s.summaryNumber}>{contacts.length}</Text><Text style={s.summaryLabel}>Saved contacts</Text></View><View style={s.summaryDivider}/><View><Text style={s.summaryNumber}>{contacts.filter(c=>c.favorite).length}</Text><Text style={s.summaryLabel}>Favorites</Text></View><View style={s.summaryIcon}><Ionicons name="people" size={28} color={C.blue}/></View></View>}
-      <FlatList data={visibleContacts} keyExtractor={item=>String(item.id)} contentContainerStyle={{paddingHorizontal:20,paddingBottom:110}} ListHeaderComponent={<Text style={s.sectionLabel}>{tab==='Favorites'?'FAVORITE CONTACTS':'ALL CONTACTS'} · {visibleContacts.length}</Text>} ListEmptyComponent={<View style={s.empty}><Ionicons name="people-outline" size={42} color="#AAB2C0"/><Text style={s.emptyTitle}>No contacts yet</Text><Text style={s.emptyText}>Add a contact to get started.</Text><PrimaryButton title="Add contact" icon="add" onPress={openNew}/></View>} renderItem={({item})=><ContactRow item={item} onPress={()=>openContact(item)} onFavorite={()=>toggleFavorite(item)}/>} />
+      <FlatList data={visibleContacts} keyExtractor={item=>String(item.id)} contentContainerStyle={{paddingHorizontal:20,paddingBottom:110}} ListHeaderComponent={<Text style={s.sectionLabel}>{tab==='Favorites'?'FAVORITE CONTACTS':'ALL CONTACTS'} · {visibleContacts.length}</Text>} ListEmptyComponent={<View style={s.empty}><Ionicons name="people-outline" size={42} color="#AAB2C0"/><Text style={s.emptyTitle}>No contacts yet</Text><Text style={s.emptyText}>Add a contact to get started.</Text><PrimaryButton styles={s} title="Add contact" icon="add" onPress={openNew}/></View>} renderItem={({item})=><ContactRow styles={s} item={item} onPress={()=>openContact(item)} onFavorite={()=>toggleFavorite(item)}/>} />
     </> : tab==='Groups' ? <ScrollView contentContainerStyle={s.page}>
       <Text style={s.helper}>Organize people into groups to find them faster.</Text>
       <View style={s.groupCreate}><TextInput value={groupName} onChangeText={setGroupName} placeholder="New group name" style={[s.input,{flex:1,marginBottom:0}]}/><Pressable onPress={addGroup} style={s.addGroup}><Ionicons name={editingGroupId?'checkmark':'add'} size={22} color="white"/></Pressable></View>
       {groups.map(g=><Pressable key={g.id} style={s.groupRow} onPress={()=>{setFilterGroup(g.id);setFavoriteOnly(false);setTab('Contacts')}}><View style={s.groupIcon}><Ionicons name="people" size={20} color={C.blue}/></View><View style={{flex:1}}><Text style={s.contactName}>{g.name}</Text><Text style={s.contactSub}>{g.member_count} members</Text></View><Pressable hitSlop={10} onPress={()=>{setGroupName(g.name);setEditingGroupId(g.id);}}><Ionicons name="create-outline" color={C.blue} size={19} style={{marginRight:12}}/></Pressable><Ionicons name="chevron-forward" size={18} color={C.muted}/><Pressable hitSlop={10} onPress={()=>Alert.alert('Delete group?',`Remove the group “${g.name}”? Contacts will remain saved.`,[{text:'Cancel',style:'cancel'},{text:'Delete',style:'destructive',onPress:async()=>{await deleteGroup(g.id);refresh();}}])}><Ionicons name="trash-outline" color={C.red} size={18} style={{marginLeft:14}}/></Pressable></Pressable>)}
     </ScrollView> : tab==='Recently Deleted' ? <FlatList data={deletedContacts} keyExtractor={item=>String(item.id)} contentContainerStyle={{paddingHorizontal:20,paddingBottom:110}} ListHeaderComponent={<View><Text style={s.helper}>Deleted contacts stay here for 30 days. Restore them before the time expires, or delete them permanently.</Text><Text style={s.sectionLabel}>RECENTLY DELETED · {deletedContacts.length}</Text></View>} ListEmptyComponent={<View style={s.empty}><Ionicons name="trash-outline" size={42} color="#AAB2C0"/><Text style={s.emptyTitle}>Nothing deleted</Text><Text style={s.emptyText}>Contacts you delete will appear here for 30 days.</Text></View>} renderItem={({item})=><View style={s.contactRow}><View style={s.avatar}><Text style={s.avatarText}>{initials(item)}</Text></View><View style={{flex:1}}><Text style={s.contactName}>{item.first_name} {item.last_name}</Text><Text style={s.contactSub}>{daysLeft(item.deleted_at)} days left to restore</Text></View><Pressable onPress={()=>restoreDeleted(item)} style={s.restoreButton}><Ionicons name="refresh" size={17} color={C.blue}/><Text style={s.restoreText}>Restore</Text></Pressable><Pressable onPress={()=>permanentlyDelete(item)} hitSlop={10} style={{padding:8}}><Ionicons name="trash-outline" size={19} color={C.red}/></Pressable></View>} /> : <ScrollView contentContainerStyle={s.page}>
-      <Text style={s.sectionLabel}>DATA & PREFERENCES</Text>
-      <View style={s.settingCard}><Action icon="cloud-download-outline" label="Back up contacts" onPress={backup}/><View style={s.divider}/><Action icon="cloud-upload-outline" label="Restore from backup" onPress={restore}/><View style={s.divider}/><Action icon="trash-outline" label={'Recently deleted ('+deletedContacts.length+')'} onPress={()=>setTab('Recently Deleted')} tint={C.red}/></View>
+      <Text style={s.sectionLabel}>APPEARANCE</Text><View style={s.settingCard}><Pressable onPress={()=>setDarkMode(value=>!value)} style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingVertical:5}}><View style={{flexDirection:"row",alignItems:"center",gap:12}}><Ionicons name={darkMode?"moon":"sunny"} size={21} color={C.blue}/><View><Text style={s.contactName}>{darkMode?"Dark mode":"Light mode"}</Text><Text style={s.contactSub}>Choose your preferred app appearance</Text></View></View><View style={{backgroundColor:darkMode?C.blue:"#CBD5E1",paddingHorizontal:12,paddingVertical:7,borderRadius:20}}><Text style={{color:"white",fontSize:11,fontWeight:"700"}}>{darkMode?"ON":"OFF"}</Text></View></Pressable></View><Text style={s.sectionLabel}>DATA & PREFERENCES</Text>
+      <View style={s.settingCard}><Action styles={s} icon="cloud-download-outline" label="Back up contacts" onPress={backup}/><View style={s.divider}/><Action styles={s} icon="cloud-upload-outline" label="Restore from backup" onPress={restore}/><View style={s.divider}/><Action styles={s} icon="trash-outline" label={'Recently deleted ('+deletedContacts.length+')'} onPress={()=>setTab('Recently Deleted')} tint={C.red}/></View>
       <Text style={s.sectionLabel}>ABOUT</Text><View style={s.settingCard}><Text style={s.aboutTitle}>Contact Manager</Text><Text style={s.helper}>Offline-first contact organizer. Your contacts stay on this device unless you choose to export a backup.</Text><Text style={s.version}>Version 1.0.0</Text></View>
     </ScrollView>}
     <View style={s.tabBar}>{[['Home','home-outline'],['Contacts','people-outline'],['Groups','grid-outline'],['Favorites','heart-outline'],['Settings','settings-outline']].map(([name,icon])=><Pressable key={name} onPress={()=>{setTab(name);setFavoriteOnly(name==='Favorites');if(name!=='Contacts')setFilterGroup(null);}} style={s.tabItem}><Ionicons name={icon} size={21} color={tab===name?C.blue:'#929AAA'}/><Text style={[s.tabLabel,tab===name&&{color:C.blue,fontWeight:'700'}]}>{name}</Text></Pressable>)}</View>
@@ -136,13 +142,13 @@ export default function App() {
       <SafeAreaView style={s.modalSafe}><View style={s.modalHeader}><Pressable onPress={()=>setModal(null)}><Ionicons name="close" size={25} color={C.ink}/></Pressable><Text style={s.modalTitle}>{form.id?'Edit contact':'New contact'}</Text><View style={{width:25}}/></View>
         <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView contentContainerStyle={s.formPage} keyboardShouldPersistTaps="handled">
           <View style={s.bigAvatar}><Text style={s.bigAvatarText}>{initials(form)}</Text></View>
-          <Field label="First name *" value={form.first_name} onChangeText={v=>update('first_name',v)}/><Field label="Last name" value={form.last_name} onChangeText={v=>update('last_name',v)}/>
+          <Field styles={s} label="First name *" value={form.first_name} onChangeText={v=>update('first_name',v)}/><Field label="Last name" value={form.last_name} onChangeText={v=>update('last_name',v)}/>
           <Field label="Phone number" value={form.phone} onChangeText={v=>update('phone',v)} keyboardType="phone-pad"/><Field label="Email address" value={form.email} onChangeText={v=>update('email',v)} keyboardType="email-address"/>
           <Field label="Company" value={form.company} onChangeText={v=>update('company',v)}/><Field label="Job title" value={form.job_title} onChangeText={v=>update('job_title',v)}/><Field label="Address" value={form.address} onChangeText={v=>update('address',v)}/>
           <Text style={s.label}>Contact group</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:14}}><Pressable onPress={()=>update('group_id',null)} style={[s.chip, !form.group_id&&s.chipActive]}><Text style={[s.chipText,!form.group_id&&s.chipTextActive]}>None</Text></Pressable>{groups.map(g=><Pressable key={g.id} onPress={()=>update('group_id',String(g.id))} style={[s.chip,{marginLeft:7},String(form.group_id)===String(g.id)&&s.chipActive]}><Text style={[s.chipText,String(form.group_id)===String(g.id)&&s.chipTextActive]}>{g.name}</Text></Pressable>)}</ScrollView>
           <Field label="Notes" value={form.notes} onChangeText={v=>update('notes',v)} multiline/>
           <Pressable style={s.favoriteToggle} onPress={()=>update('favorite',!form.favorite)}><Ionicons name={form.favorite?'heart':'heart-outline'} size={21} color="#EF476F"/><Text style={s.contactName}>Add to favorites</Text><View style={{flex:1}}/><Ionicons name={form.favorite?'checkbox':'square-outline'} size={22} color={C.blue}/></Pressable>
-          <PrimaryButton title={form.id?'Save changes':'Save contact'} onPress={submitContact}/>
+          <PrimaryButton styles={s} title={form.id?'Save changes':'Save contact'} onPress={submitContact}/>
         </ScrollView></KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
@@ -159,7 +165,7 @@ export default function App() {
   </SafeAreaView>;
 }
 
-const s = StyleSheet.create({
+const createStyles = C => StyleSheet.create({
   safe:{flex:1,backgroundColor:C.bg}, header:{paddingHorizontal:22,paddingTop:12,paddingBottom:17,flexDirection:'row',alignItems:'center',justifyContent:'space-between'}, eyebrow:{fontSize:10,fontWeight:'800',letterSpacing:1.5,color:C.blue,marginBottom:5}, title:{fontSize:27,fontWeight:'800',color:C.ink}, headerAdd:{width:44,height:44,borderRadius:15,backgroundColor:C.blue,alignItems:'center',justifyContent:'center',elevation:3},
   searchBox:{marginHorizontal:20,marginBottom:13,backgroundColor:C.white,borderRadius:14,paddingHorizontal:14,height:49,flexDirection:'row',alignItems:'center',gap:9,borderWidth:1,borderColor:C.line},searchInput:{flex:1,fontSize:14,color:C.ink},quickFilters:{flexDirection:'row',paddingHorizontal:20,gap:8,marginBottom:12},chip:{paddingHorizontal:14,paddingVertical:8,borderRadius:22,backgroundColor:C.white,borderWidth:1,borderColor:C.line},chipActive:{backgroundColor:C.pale,borderColor:'#BFDBFE'},chipText:{fontSize:12,color:C.muted,fontWeight:'600'},chipTextActive:{color:C.blue},
   summary:{marginHorizontal:20,marginBottom:13,backgroundColor:C.white,borderRadius:18,padding:17,flexDirection:'row',alignItems:'center',gap:18,borderWidth:1,borderColor:C.line},summaryNumber:{fontSize:24,fontWeight:'800',color:C.ink},summaryLabel:{fontSize:11,color:C.muted,marginTop:2},summaryDivider:{width:1,height:35,backgroundColor:C.line},summaryIcon:{marginLeft:'auto',width:48,height:48,borderRadius:15,backgroundColor:C.pale,alignItems:'center',justifyContent:'center'},
