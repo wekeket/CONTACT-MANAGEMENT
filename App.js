@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  Alert, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable,
+  Alert, FlatList, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable,
   ScrollView, StatusBar, StyleSheet, Text, TextInput, View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,11 +10,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as Contacts from 'expo-contacts';
+import * as ImagePicker from 'expo-image-picker';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { deleteContact, deleteGroup, exportData, getDatabase, importData, listContacts, listGroups, listRecentlyDeleted, restoreContact, permanentlyDeleteContact, saveContact, saveGroup } from './src/database';
 
 const C = { blue:'#2563EB', pale:'#EFF6FF', bg:'#F5F7FB', ink:'#172033', muted:'#7B8496', line:'#E7EAF0', white:'#FFFFFF', red:'#DC2626', green:'#16A34A' };
-const emptyForm = { first_name:'', last_name:'', phone:'', email:'', address:'', company:'', job_title:'', notes:'', favorite:false, group_id:null, group_ids:[] };
+const emptyForm = { first_name:'', last_name:'', phone:'', email:'', address:'', company:'', job_title:'', notes:'', favorite:false, group_id:null, group_ids:[], photo_uri:null };
 const initials = c => ((c.first_name?.[0] || '') + (c.last_name?.[0] || '')).toUpperCase() || '?';
 
 function Action({ icon, label, onPress, tint=C.blue, styles }) {
@@ -22,7 +23,7 @@ function Action({ icon, label, onPress, tint=C.blue, styles }) {
 }
 function ContactRow({ item, onPress, onFavorite, styles }) {
   return <Pressable style={styles.contactRow} onPress={onPress}>
-    <View style={styles.avatar}><Text style={styles.avatarText}>{initials(item)}</Text></View>
+    <View style={styles.avatar}>{item.photo_uri ? <Image source={{uri:item.photo_uri}} style={styles.avatarImage}/> : <Text style={styles.avatarText}>{initials(item)}</Text>}</View>
     <View style={{flex:1}}><Text style={styles.contactName}>{item.first_name} {item.last_name}</Text><Text style={styles.contactSub}>{item.phone || item.email || 'No phone or email'}</Text></View>
     <Pressable hitSlop={12} onPress={onFavorite}><Ionicons name={item.favorite ? 'heart' : 'heart-outline'} size={22} color={item.favorite ? '#EF476F' : '#9AA3B2'}/></Pressable>
     <Ionicons name="chevron-forward" size={18} color="#AAB2C0" style={{marginLeft:10}}/>
@@ -68,6 +69,34 @@ export default function App() {
   const openNew = () => { setForm(emptyForm); setModal('form'); };
   const openEdit = c => { const ids=(c.group_ids||'').split(',').filter(Boolean); setForm({...c,group_id:null,group_ids:ids, favorite:!!c.favorite}); setModal('form'); };
   const update = (key,value) => setForm(old=>({...old,[key]:value}));
+  const chooseContactPhoto = async source => {
+    try {
+      let result;
+      if (source === 'camera') {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) return Alert.alert('Camera permission needed','Allow camera access to take a contact photo.');
+        result = await ImagePicker.launchCameraAsync({mediaTypes:['images'],allowsEditing:true,aspect:[1,1],quality:0.85});
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) return Alert.alert('Photo permission needed','Allow photo library access to choose a contact picture.');
+        result = await ImagePicker.launchImageLibraryAsync({mediaTypes:['images'],allowsEditing:true,aspect:[1,1],quality:0.85});
+      }
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const sourceUri=result.assets[0].uri;
+      const directory=FileSystem.documentDirectory+'contact-photos/';
+      await FileSystem.makeDirectoryAsync(directory,{intermediates:true});
+      const extension=(sourceUri.split('.').pop()||'jpg').split('?')[0];
+      const destination=directory+'contact-'+Date.now()+'.'+extension;
+      await FileSystem.copyAsync({from:sourceUri,to:destination});
+      update('photo_uri',destination);
+    } catch(error) { Alert.alert('Unable to add photo',error.message || 'Please try again.'); }
+  };
+  const showPhotoOptions = () => Alert.alert('Contact picture','Choose how to add a picture.',[
+    {text:'Take a photo',onPress:()=>chooseContactPhoto('camera')},
+    {text:'Choose from gallery',onPress:()=>chooseContactPhoto('gallery')},
+    ...(form.photo_uri ? [{text:'Remove picture',style:'destructive',onPress:()=>update('photo_uri',null)}] : []),
+    {text:'Cancel',style:'cancel'}
+  ]);
   const toggleContactGroup = id => setForm(old=>({...old,group_ids:(old.group_ids||[]).includes(String(id)) ? old.group_ids.filter(x=>x!==String(id)) : [...(old.group_ids||[]),String(id)]}));
   const submitContact = async () => {
     if (!form.first_name.trim()) return Alert.alert('Required field','Please enter a first name.');
@@ -157,7 +186,7 @@ export default function App() {
     <Modal visible={modal==='form'} animationType="slide" onRequestClose={()=>setModal(null)}>
       <SafeAreaView style={s.modalSafe}><View style={s.modalHeader}><Pressable onPress={()=>setModal(null)}><Ionicons name="close" size={25} color={C.ink}/></Pressable><Text style={s.modalTitle}>{form.id?'Edit contact':'New contact'}</Text><View style={{width:25}}/></View>
         <KeyboardAvoidingView style={{flex:1}} behavior={Platform.OS==='ios'?'padding':undefined}><ScrollView contentContainerStyle={s.formPage} keyboardShouldPersistTaps="handled">
-          <View style={s.bigAvatar}><Text style={s.bigAvatarText}>{initials(form)}</Text></View>
+          <Pressable onPress={showPhotoOptions} style={s.photoPicker}><View style={s.bigAvatar}>{form.photo_uri ? <Image source={{uri:form.photo_uri}} style={s.bigAvatarImage}/> : <Text style={s.bigAvatarText}>{initials(form)}</Text>}<View style={s.photoCamera}><Ionicons name="camera" size={16} color="white"/></View></View><Text style={s.photoPickerText}>{form.photo_uri ? "Change contact picture" : "Add contact picture"}</Text></Pressable>
           <Field styles={s} label="First name *" value={form.first_name} onChangeText={v=>update('first_name',v)}/><Field styles={s} label="Last name" value={form.last_name} onChangeText={v=>update('last_name',v)}/>
           <Field styles={s} label="Phone number" value={form.phone} onChangeText={v=>update('phone',v)} keyboardType="phone-pad"/><Field styles={s} label="Email address" value={form.email} onChangeText={v=>update('email',v)} keyboardType="email-address"/>
           <Field styles={s} label="Company" value={form.company} onChangeText={v=>update('company',v)}/><Field styles={s} label="Job title" value={form.job_title} onChangeText={v=>update('job_title',v)}/><Field styles={s} label="Address" value={form.address} onChangeText={v=>update('address',v)}/>
@@ -171,7 +200,7 @@ export default function App() {
 
     <Modal visible={modal==='details'} animationType="slide" transparent onRequestClose={()=>setModal(null)}>
       <View style={s.overlay}><View style={s.detailSheet}><View style={s.sheetHandle}/><Pressable style={s.closeDetail} onPress={()=>setModal(null)}><Ionicons name="close" size={23} color={C.ink}/></Pressable>
-        {selected && <ScrollView contentContainerStyle={{paddingBottom:24}}><View style={s.detailAvatar}><Text style={s.bigAvatarText}>{initials(selected)}</Text></View><Text style={s.detailName}>{selected.first_name} {selected.last_name}</Text><Text style={s.detailSub}>{selected.job_title}{selected.job_title&&selected.company?' · ':''}{selected.company}</Text>
+        {selected && <ScrollView contentContainerStyle={{paddingBottom:24}}><View style={s.detailAvatar}>{selected.photo_uri ? <Image source={{uri:selected.photo_uri}} style={s.detailAvatarImage}/> : <Text style={s.bigAvatarText}>{initials(selected)}</Text>}</View><Text style={s.detailName}>{selected.first_name} {selected.last_name}</Text><Text style={s.detailSub}>{selected.job_title}{selected.job_title&&selected.company?' · ':''}{selected.company}</Text>
           <View style={s.actions}><Action styles={s} icon="call" label="Call" onPress={()=>call(selected)}/><Action styles={s} icon="chatbubble" label="Message" onPress={()=>sms(selected)}/><Action styles={s} icon="mail" label="Email" onPress={()=>email(selected)}/></View>
           {[['call-outline','Phone',selected.phone],['mail-outline','Email',selected.email],['business-outline','Company',selected.company],['briefcase-outline','Job title',selected.job_title],['location-outline','Address',selected.address],['people-outline','Group',selected.group_name],['document-text-outline','Notes',selected.notes]].filter(x=>x[2]).map(([icon,label,value])=><View key={label} style={s.detailField}><Ionicons name={icon} size={19} color={C.blue}/><View style={{flex:1}}><Text style={s.detailLabel}>{label}</Text><Text style={s.detailValue}>{value}</Text></View></View>)}
           <View style={s.detailButtons}><Pressable style={s.secondaryButton} onPress={()=>{const c=selected;setModal('form');openEdit(c);}}><Ionicons name="create-outline" size={18} color={C.blue}/><Text style={s.secondaryText}>Edit</Text></Pressable><Pressable style={s.secondaryButton} onPress={()=>toggleFavorite(selected)}><Ionicons name={selected.favorite?'heart':'heart-outline'} size={18} color="#EF476F"/><Text style={s.secondaryText}>{selected.favorite?'Unfavorite':'Favorite'}</Text></Pressable><Pressable style={s.secondaryButton} onPress={()=>confirmDelete(selected)}><Ionicons name="trash-outline" size={18} color={C.red}/><Text style={[s.secondaryText,{color:C.red}]}>Delete</Text></Pressable></View>
@@ -185,7 +214,7 @@ const createStyles = C => StyleSheet.create({
   safe:{flex:1,backgroundColor:C.bg}, header:{paddingHorizontal:22,paddingTop:12,paddingBottom:17,flexDirection:'row',alignItems:'center',justifyContent:'space-between'}, eyebrow:{fontSize:10,fontWeight:'800',letterSpacing:1.5,color:C.blue,marginBottom:5}, title:{fontSize:27,fontWeight:'800',color:C.ink}, headerAdd:{width:44,height:44,borderRadius:15,backgroundColor:C.blue,alignItems:'center',justifyContent:'center',elevation:3},
   searchBox:{marginHorizontal:20,marginBottom:13,backgroundColor:C.white,borderRadius:14,paddingHorizontal:14,height:49,flexDirection:'row',alignItems:'center',gap:9,borderWidth:1,borderColor:C.line},searchInput:{flex:1,fontSize:14,color:C.ink},quickFilters:{flexDirection:'row',paddingHorizontal:20,gap:8,marginBottom:12},chip:{paddingHorizontal:14,paddingVertical:8,borderRadius:22,backgroundColor:C.white,borderWidth:1,borderColor:C.line},chipActive:{backgroundColor:C.pale,borderColor:'#BFDBFE'},chipText:{fontSize:12,color:C.muted,fontWeight:'600'},chipTextActive:{color:C.blue},
   summary:{marginHorizontal:20,marginBottom:13,backgroundColor:C.white,borderRadius:18,padding:17,flexDirection:'row',alignItems:'center',gap:18,borderWidth:1,borderColor:C.line},summaryNumber:{fontSize:24,fontWeight:'800',color:C.ink},summaryLabel:{fontSize:11,color:C.muted,marginTop:2},summaryDivider:{width:1,height:35,backgroundColor:C.line},summaryIcon:{marginLeft:'auto',width:48,height:48,borderRadius:15,backgroundColor:C.pale,alignItems:'center',justifyContent:'center'},
-  sectionLabel:{fontSize:10,fontWeight:'800',letterSpacing:1.1,color:C.muted,marginTop:8,marginBottom:10},contactRow:{backgroundColor:C.white,borderRadius:15,padding:13,marginBottom:9,flexDirection:'row',alignItems:'center',borderWidth:1,borderColor:C.line},avatar:{width:44,height:44,borderRadius:15,backgroundColor:C.pale,alignItems:'center',justifyContent:'center',marginRight:12},avatarText:{fontSize:15,fontWeight:'800',color:C.blue},contactName:{fontSize:14,fontWeight:'700',color:C.ink},contactSub:{fontSize:12,color:C.muted,marginTop:4},empty:{alignItems:'center',paddingTop:70,gap:10},emptyTitle:{fontSize:18,fontWeight:'800',color:C.ink},emptyText:{fontSize:13,color:C.muted,marginBottom:8},
+  sectionLabel:{fontSize:10,fontWeight:'800',letterSpacing:1.1,color:C.muted,marginTop:8,marginBottom:10},contactRow:{backgroundColor:C.white,borderRadius:15,padding:13,marginBottom:9,flexDirection:'row',alignItems:'center',borderWidth:1,borderColor:C.line},avatar:{width:44,height:44,borderRadius:15,backgroundColor:C.pale,alignItems:'center',justifyContent:'center',marginRight:12,overflow:'hidden'},avatarImage:{width:'100%',height:'100%'},avatarText:{fontSize:15,fontWeight:'800',color:C.blue},contactName:{fontSize:14,fontWeight:'700',color:C.ink},contactSub:{fontSize:12,color:C.muted,marginTop:4},empty:{alignItems:'center',paddingTop:70,gap:10},emptyTitle:{fontSize:18,fontWeight:'800',color:C.ink},emptyText:{fontSize:13,color:C.muted,marginBottom:8},
   tabBar:{position:'absolute',bottom:0,left:0,right:0,backgroundColor:C.white,borderTopWidth:1,borderColor:C.line,paddingTop:10,paddingBottom:Platform.OS==='ios'?22:10,flexDirection:'row',justifyContent:'space-around'},tabItem:{alignItems:'center',gap:4,minWidth:55},tabLabel:{fontSize:10,color:'#929AAA'},
   page:{paddingHorizontal:20,paddingBottom:110},helper:{fontSize:13,color:C.muted,lineHeight:20,marginBottom:16},groupCreate:{flexDirection:'row',gap:9,alignItems:'center',marginBottom:18},input:{backgroundColor:C.white,borderWidth:1,borderColor:C.line,borderRadius:12,paddingHorizontal:13,paddingVertical:12,fontSize:14,color:C.ink,marginBottom:13},addGroup:{width:47,height:47,borderRadius:13,backgroundColor:C.blue,alignItems:'center',justifyContent:'center'},groupRow:{backgroundColor:C.white,borderRadius:15,padding:14,marginBottom:9,flexDirection:'row',alignItems:'center',borderWidth:1,borderColor:C.line},groupIcon:{width:42,height:42,borderRadius:13,backgroundColor:C.pale,alignItems:'center',justifyContent:'center',marginRight:12},
   settingCard:{backgroundColor:C.white,borderRadius:16,borderWidth:1,borderColor:C.line,padding:15,marginBottom:23},action:{alignItems:'center',justifyContent:'center',minWidth:72,gap:6,padding:5},actionIcon:{width:43,height:43,borderRadius:14,alignItems:'center',justifyContent:'center'},actionText:{fontSize:11,fontWeight:'600',color:C.ink},divider:{height:1,backgroundColor:C.line,marginVertical:12},aboutTitle:{fontSize:16,fontWeight:'800',color:C.ink,marginBottom:7},version:{fontSize:11,color:C.muted,marginTop:12},
