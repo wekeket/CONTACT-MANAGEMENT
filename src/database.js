@@ -17,6 +17,7 @@ export async function getDatabase() {
         company TEXT NOT NULL DEFAULT '',
         job_title TEXT NOT NULL DEFAULT '',
         notes TEXT NOT NULL DEFAULT '',
+        photo_uri TEXT,
         favorite INTEGER NOT NULL DEFAULT 0,
         group_id INTEGER,
         created_at TEXT NOT NULL,
@@ -42,6 +43,9 @@ export async function getDatabase() {
       );
     `);
     const columns = await db.getAllAsync('PRAGMA table_info(contacts)');
+    if (!columns.some(column => column.name === 'photo_uri')) {
+      await db.execAsync('ALTER TABLE contacts ADD COLUMN photo_uri TEXT');
+    }
     if (!columns.some(column => column.name === 'deleted_at')) {
       await db.execAsync('ALTER TABLE contacts ADD COLUMN deleted_at TEXT');
     }
@@ -79,11 +83,11 @@ export async function saveContact(contact) {
     contact.first_name.trim(), contact.last_name.trim(), contact.phone.trim(),
     contact.email.trim(), contact.address.trim(), contact.company.trim(),
     contact.job_title.trim(), contact.notes.trim(), contact.favorite ? 1 : 0,
-    null, now
+    null, now, contact.photo_uri || null
   ];
   if (contact.id) {
     await database.runAsync(`UPDATE contacts SET first_name=?, last_name=?, phone=?, email=?,
-      address=?, company=?, job_title=?, notes=?, favorite=?, group_id=?, updated_at=?, deleted_at=NULL WHERE id=?`,
+      address=?, company=?, job_title=?, notes=?, favorite=?, group_id=?, updated_at=?, deleted_at=NULL, photo_uri=? WHERE id=?`,
       ...values, contact.id);
     await database.runAsync('DELETE FROM contact_groups WHERE contact_id=?', contact.id);
     for (const groupId of (contact.group_ids || (contact.group_id ? [contact.group_id] : []))) {
@@ -92,8 +96,8 @@ export async function saveContact(contact) {
     return contact.id;
   }
   const result = await database.runAsync(`INSERT INTO contacts
-    (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, ...values, now);
+    (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at,photo_uri)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, ...values, now);
   const contactId = result.lastInsertRowId;
   for (const groupId of (contact.group_ids || (contact.group_id ? [contact.group_id] : []))) {
     await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', contactId, Number(groupId));
@@ -174,11 +178,11 @@ export async function importData(data) {
       if (duplicate) continue;
       const now = new Date().toISOString();
       const inserted = await database.runAsync(`INSERT INTO contacts
-        (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at,deleted_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at,deleted_at,photo_uri)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         contact.first_name, contact.last_name || '', contact.phone || '', contact.email || '',
         contact.address || '', contact.company || '', contact.job_title || '', contact.notes || '',
-        contact.favorite ? 1 : 0, mappedGroup, contact.created_at || now, now, contact.deleted_at || null);
+        contact.favorite ? 1 : 0, mappedGroup, contact.created_at || now, now, contact.deleted_at || null, contact.photo_uri || null);
       const newContactId = inserted.lastInsertRowId;
       if (mappedGroup) await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', newContactId, mappedGroup);
       if (Array.isArray(data.memberships)) {
