@@ -49,6 +49,8 @@ export async function getDatabase() {
       "DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at <= ?",
       new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
     );
+    await db.runAsync(`INSERT OR IGNORE INTO contact_groups (contact_id, group_id)
+      SELECT id, group_id FROM contacts WHERE group_id IS NOT NULL`);
     const count = await db.getFirstAsync('SELECT COUNT(*) AS count FROM groups_table');
     if (!count?.count) {
       for (const name of ['Family', 'Friends', 'Work', 'School']) {
@@ -61,7 +63,7 @@ export async function getDatabase() {
 
 export async function listContacts({ search = '', favorite = false, groupId = null } = {}) {
   const database = await getDatabase();
-  const query = `SELECT c.*, (SELECT GROUP_CONCAT(g.name, ', ') FROM contact_groups cg JOIN groups_table g ON g.id=cg.group_id WHERE cg.contact_id=c.id) AS group_name
+  const query = `SELECT c.*, (SELECT GROUP_CONCAT(g.name, ', ') FROM contact_groups cg JOIN groups_table g ON g.id=cg.group_id WHERE cg.contact_id=c.id) AS group_name FROM contacts c
     WHERE c.deleted_at IS NULL AND (? = '' OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)
     AND (? = 0 OR c.favorite = 1)
     AND (? IS NULL OR EXISTS (SELECT 1 FROM contact_groups cg WHERE cg.contact_id=c.id AND cg.group_id=?))
