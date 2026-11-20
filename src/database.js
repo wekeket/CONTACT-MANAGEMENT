@@ -97,7 +97,10 @@ export async function saveContact(contact) {
   }
   const result = await database.runAsync(`INSERT INTO contacts
     (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at,photo_uri)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, ...values, now);
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    contact.first_name.trim(), contact.last_name.trim(), contact.phone.trim(), contact.email.trim(),
+    contact.address.trim(), contact.company.trim(), contact.job_title.trim(), contact.notes.trim(),
+    contact.favorite ? 1 : 0, null, now, now, contact.photo_uri || null);
   const contactId = result.lastInsertRowId;
   for (const groupId of (contact.group_ids || (contact.group_id ? [contact.group_id] : []))) {
     await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', contactId, Number(groupId));
