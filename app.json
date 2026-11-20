@@ -4,7 +4,7 @@
     "slug": "contact-manager",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "backgroundColor": "#F5F7FB"
     },
@@ -25,6 +25,11 @@
           "microphonePermission": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "58f1502a-b0d6-48e1-982a-5d832a2d32b5"
+      }
+    }
   }
 }
