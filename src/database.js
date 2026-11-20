@@ -20,7 +20,8 @@ export async function getDatabase() {
         favorite INTEGER NOT NULL DEFAULT 0,
         group_id INTEGER,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
       );
       CREATE TABLE IF NOT EXISTS groups_table (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +29,14 @@ export async function getDatabase() {
         description TEXT NOT NULL DEFAULT ''
       );
     `);
+    const columns = await db.getAllAsync('PRAGMA table_info(contacts)');
+    if (!columns.some(column => column.name === 'deleted_at')) {
+      await db.execAsync('ALTER TABLE contacts ADD COLUMN deleted_at TEXT');
+    }
+    await db.runAsync(
+      "DELETE FROM contacts WHERE deleted_at IS NOT NULL AND deleted_at <= ?",
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    );
     const count = await db.getFirstAsync('SELECT COUNT(*) AS count FROM groups_table');
     if (!count?.count) {
       for (const name of ['Family', 'Friends', 'Work', 'School']) {
@@ -42,7 +51,7 @@ export async function listContacts({ search = '', favorite = false, groupId = nu
   const database = await getDatabase();
   const query = `SELECT c.*, g.name AS group_name FROM contacts c
     LEFT JOIN groups_table g ON g.id = c.group_id
-    WHERE (? = '' OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)
+    WHERE c.deleted_at IS NULL AND (? = '' OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)
     AND (? = 0 OR c.favorite = 1)
     AND (? IS NULL OR c.group_id = ?)
     ORDER BY c.first_name COLLATE NOCASE, c.last_name COLLATE NOCASE`;
@@ -61,7 +70,7 @@ export async function saveContact(contact) {
   ];
   if (contact.id) {
     await database.runAsync(`UPDATE contacts SET first_name=?, last_name=?, phone=?, email=?,
-      address=?, company=?, job_title=?, notes=?, favorite=?, group_id=?, updated_at=? WHERE id=?`,
+      address=?, company=?, job_title=?, notes=?, favorite=?, group_id=?, updated_at=?, deleted_at=NULL WHERE id=?`,
       ...values, contact.id);
     return contact.id;
   }
@@ -73,7 +82,25 @@ export async function saveContact(contact) {
 
 export async function deleteContact(id) {
   const database = await getDatabase();
-  await database.runAsync('DELETE FROM contacts WHERE id = ?', id);
+  await database.runAsync('UPDATE contacts SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL', new Date().toISOString(), id);
+}
+
+export async function listRecentlyDeleted() {
+  const database = await getDatabase();
+  return database.getAllAsync(`SELECT c.*, g.name AS group_name FROM contacts c
+    LEFT JOIN groups_table g ON g.id = c.group_id
+    WHERE c.deleted_at IS NOT NULL
+    ORDER BY c.deleted_at DESC`);
+}
+
+export async function restoreContact(id) {
+  const database = await getDatabase();
+  await database.runAsync('UPDATE contacts SET deleted_at=NULL, updated_at=? WHERE id=?', new Date().toISOString(), id);
+}
+
+export async function permanentlyDeleteContact(id) {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM contacts WHERE id=? AND deleted_at IS NOT NULL', id);
 }
 
 export async function listGroups() {
@@ -98,11 +125,11 @@ export async function exportData() {
   const database = await getDatabase();
   const contacts = await database.getAllAsync('SELECT * FROM contacts');
   const groups = await database.getAllAsync('SELECT * FROM groups_table');
-  return { schemaVersion: 1, exportedAt: new Date().toISOString(), contacts, groups };
+  return { schemaVersion: 2, exportedAt: new Date().toISOString(), contacts, groups };
 }
 
 export async function importData(data) {
-  if (!data || data.schemaVersion !== 1 || !Array.isArray(data.contacts) || !Array.isArray(data.groups)) {
+  if (!data || ![1, 2].includes(data.schemaVersion) || !Array.isArray(data.contacts) || !Array.isArray(data.groups)) {
     throw new Error('This is not a valid Contact Manager backup.');
   }
   const database = await getDatabase();
@@ -124,11 +151,11 @@ export async function importData(data) {
       if (duplicate) continue;
       const now = new Date().toISOString();
       await database.runAsync(`INSERT INTO contacts
-        (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at,deleted_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         contact.first_name, contact.last_name || '', contact.phone || '', contact.email || '',
         contact.address || '', contact.company || '', contact.job_title || '', contact.notes || '',
-        contact.favorite ? 1 : 0, mappedGroup, contact.created_at || now, now);
+        contact.favorite ? 1 : 0, mappedGroup, contact.created_at || now, now, contact.deleted_at || null);
     }
   });
 }
