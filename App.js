@@ -9,11 +9,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as Contacts from 'expo-contacts';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { deleteContact, deleteGroup, exportData, getDatabase, importData, listContacts, listGroups, listRecentlyDeleted, restoreContact, permanentlyDeleteContact, saveContact, saveGroup } from './src/database';
 
 const C = { blue:'#2563EB', pale:'#EFF6FF', bg:'#F5F7FB', ink:'#172033', muted:'#7B8496', line:'#E7EAF0', white:'#FFFFFF', red:'#DC2626', green:'#16A34A' };
-const emptyForm = { first_name:'', last_name:'', phone:'', email:'', address:'', company:'', job_title:'', notes:'', favorite:false, group_id:null };
+const emptyForm = { first_name:'', last_name:'', phone:'', email:'', address:'', company:'', job_title:'', notes:'', favorite:false, group_id:null, group_ids:[] };
 const initials = c => ((c.first_name?.[0] || '') + (c.last_name?.[0] || '')).toUpperCase() || '?';
 
 function Action({ icon, label, onPress, tint=C.blue, styles }) {
@@ -64,8 +65,9 @@ export default function App() {
   useEffect(() => { refresh(); }, [search, favoriteOnly, filterGroup]);
   const ordered = useMemo(() => sortRecent ? [...contacts].sort((a,b)=>b.id-a.id) : contacts, [contacts,sortRecent]);
   const openNew = () => { setForm(emptyForm); setModal('form'); };
-  const openEdit = c => { setForm({...c,group_id:c.group_id ? String(c.group_id) : null, favorite:!!c.favorite}); setModal('form'); };
+  const openEdit = c => { const ids=(c.group_ids||'').split(',').filter(Boolean); setForm({...c,group_id:null,group_ids:ids, favorite:!!c.favorite}); setModal('form'); };
   const update = (key,value) => setForm(old=>({...old,[key]:value}));
+  const toggleContactGroup = id => setForm(old=>({...old,group_ids:(old.group_ids||[]).includes(String(id)) ? old.group_ids.filter(x=>x!==String(id)) : [...(old.group_ids||[]),String(id)]}));
   const submitContact = async () => {
     if (!form.first_name.trim()) return Alert.alert('Required field','Please enter a first name.');
     if (!form.phone.trim() && !form.email.trim()) return Alert.alert('Contact method required','Enter a phone number or email address.');
@@ -81,6 +83,19 @@ export default function App() {
     if (!groupName.trim()) return;
     try { await saveGroup(groupName, editingGroupId); setGroupName(''); setEditingGroupId(null); refresh(); }
     catch(e) { Alert.alert('Group not saved','A group with that name may already exist.'); }
+  };
+  const importPhoneContacts = async () => {
+    try {
+      const permission = await Contacts.requestPermissionsAsync();
+      if (permission.status !== 'granted') return Alert.alert('Permission needed','Allow Contacts access to import people from your Android address book.');
+      const result = await Contacts.getContactsAsync({fields:[Contacts.Fields.Name,Contacts.Fields.PhoneNumbers,Contacts.Fields.Emails]});
+      const usable = (result.data||[]).filter(c=>c.name && ((c.phoneNumbers||[]).length || (c.emails||[]).length));
+      if (!usable.length) return Alert.alert('No contacts found','No phone contacts with a phone number or email were found.');
+      Alert.alert('Import phone contacts', 'Import '+usable.length+' contacts from your Android address book? Existing matching contacts will be skipped.', [
+        {text:'Cancel',style:'cancel'},
+        {text:'Import',onPress:async()=>{let added=0,skipped=0;try{for(const c of usable){const parts=(c.name||'').trim().split(' ');const first=parts.shift()||'Contact';const last=parts.join(' ');const phone=c.phoneNumbers?.[0]?.number||'';const email=c.emails?.[0]?.email||'';const exists=contacts.some(x=>(phone && x.phone===phone)||(email && x.email.toLowerCase()===email.toLowerCase()));if(exists){skipped++;continue;}await saveContact({...emptyForm,first_name:first,last_name:last,phone,email,group_ids:[]});added++;}await refresh();Alert.alert('Import complete',added+' contacts imported. '+skipped+' matching contacts skipped.');}catch(e){Alert.alert('Import incomplete',e.message);}}}
+      ]);
+    } catch(e) { Alert.alert('Import failed',e.message); }
   };
   const backup = async () => {
     try {
@@ -133,7 +148,7 @@ export default function App() {
       {groups.map(g=><Pressable key={g.id} style={s.groupRow} onPress={()=>{setFilterGroup(g.id);setFavoriteOnly(false);setTab('Contacts')}}><View style={s.groupIcon}><Ionicons name="people" size={20} color={C.blue}/></View><View style={{flex:1}}><Text style={s.contactName}>{g.name}</Text><Text style={s.contactSub}>{g.member_count} members</Text></View><Pressable hitSlop={10} onPress={()=>{setGroupName(g.name);setEditingGroupId(g.id);}}><Ionicons name="create-outline" color={C.blue} size={19} style={{marginRight:12}}/></Pressable><Ionicons name="chevron-forward" size={18} color={C.muted}/><Pressable hitSlop={10} onPress={()=>Alert.alert('Delete group?',`Remove the group “${g.name}”? Contacts will remain saved.`,[{text:'Cancel',style:'cancel'},{text:'Delete',style:'destructive',onPress:async()=>{await deleteGroup(g.id);refresh();}}])}><Ionicons name="trash-outline" color={C.red} size={18} style={{marginLeft:14}}/></Pressable></Pressable>)}
     </ScrollView> : tab==='Recently Deleted' ? <FlatList data={deletedContacts} keyExtractor={item=>String(item.id)} contentContainerStyle={{paddingHorizontal:20,paddingBottom:110}} ListHeaderComponent={<View><Text style={s.helper}>Deleted contacts stay here for 30 days. Restore them before the time expires, or delete them permanently.</Text><Text style={s.sectionLabel}>RECENTLY DELETED · {deletedContacts.length}</Text></View>} ListEmptyComponent={<View style={s.empty}><Ionicons name="trash-outline" size={42} color="#AAB2C0"/><Text style={s.emptyTitle}>Nothing deleted</Text><Text style={s.emptyText}>Contacts you delete will appear here for 30 days.</Text></View>} renderItem={({item})=><View style={s.contactRow}><View style={s.avatar}><Text style={s.avatarText}>{initials(item)}</Text></View><View style={{flex:1}}><Text style={s.contactName}>{item.first_name} {item.last_name}</Text><Text style={s.contactSub}>{daysLeft(item.deleted_at)} days left to restore</Text></View><Pressable onPress={()=>restoreDeleted(item)} style={s.restoreButton}><Ionicons name="refresh" size={17} color={C.blue}/><Text style={s.restoreText}>Restore</Text></Pressable><Pressable onPress={()=>permanentlyDelete(item)} hitSlop={10} style={{padding:8}}><Ionicons name="trash-outline" size={19} color={C.red}/></Pressable></View>} /> : <ScrollView contentContainerStyle={s.page}>
       <Text style={s.sectionLabel}>APPEARANCE</Text><View style={s.settingCard}><Pressable onPress={()=>setDarkMode(value=>!value)} style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingVertical:5}}><View style={{flexDirection:"row",alignItems:"center",gap:12}}><Ionicons name={darkMode?"moon":"sunny"} size={21} color={C.blue}/><View><Text style={s.contactName}>{darkMode?"Dark mode":"Light mode"}</Text><Text style={s.contactSub}>Choose your preferred app appearance</Text></View></View><View style={{backgroundColor:darkMode?C.blue:"#CBD5E1",paddingHorizontal:12,paddingVertical:7,borderRadius:20}}><Text style={{color:"white",fontSize:11,fontWeight:"700"}}>{darkMode?"ON":"OFF"}</Text></View></Pressable></View><Text style={s.sectionLabel}>DATA & PREFERENCES</Text>
-      <View style={s.settingCard}><Action styles={s} icon="cloud-download-outline" label="Back up contacts" onPress={backup}/><View style={s.divider}/><Action styles={s} icon="cloud-upload-outline" label="Restore from backup" onPress={restore}/><View style={s.divider}/><Action styles={s} icon="trash-outline" label={'Recently deleted ('+deletedContacts.length+')'} onPress={()=>setTab('Recently Deleted')} tint={C.red}/></View>
+      <View style={s.settingCard}><Action styles={s} icon="person-add-outline" label="Import from phone contacts" onPress={importPhoneContacts}/><View style={s.divider}/><Action styles={s} icon="cloud-download-outline" label="Back up contacts" onPress={backup}/><View style={s.divider}/><Action styles={s} icon="cloud-upload-outline" label="Restore from backup" onPress={restore}/><View style={s.divider}/><Action styles={s} icon="trash-outline" label={'Recently deleted ('+deletedContacts.length+')'} onPress={()=>setTab('Recently Deleted')} tint={C.red}/></View>
       <Text style={s.sectionLabel}>ABOUT</Text><View style={s.settingCard}><Text style={s.aboutTitle}>Contact Manager</Text><Text style={s.helper}>Offline-first contact organizer. Your contacts stay on this device unless you choose to export a backup.</Text><Text style={s.version}>Version 1.0.0</Text></View>
     </ScrollView>}
     <View style={s.tabBar}>{[['Home','home-outline'],['Contacts','people-outline'],['Groups','grid-outline'],['Favorites','heart-outline'],['Settings','settings-outline']].map(([name,icon])=><Pressable key={name} onPress={()=>{setTab(name);setFavoriteOnly(name==='Favorites');if(name!=='Contacts')setFilterGroup(null);}} style={s.tabItem}><Ionicons name={icon} size={21} color={tab===name?C.blue:'#929AAA'}/><Text style={[s.tabLabel,tab===name&&{color:C.blue,fontWeight:'700'}]}>{name}</Text></Pressable>)}</View>
@@ -145,7 +160,7 @@ export default function App() {
           <Field styles={s} label="First name *" value={form.first_name} onChangeText={v=>update('first_name',v)}/><Field styles={s} label="Last name" value={form.last_name} onChangeText={v=>update('last_name',v)}/>
           <Field styles={s} label="Phone number" value={form.phone} onChangeText={v=>update('phone',v)} keyboardType="phone-pad"/><Field styles={s} label="Email address" value={form.email} onChangeText={v=>update('email',v)} keyboardType="email-address"/>
           <Field styles={s} label="Company" value={form.company} onChangeText={v=>update('company',v)}/><Field styles={s} label="Job title" value={form.job_title} onChangeText={v=>update('job_title',v)}/><Field styles={s} label="Address" value={form.address} onChangeText={v=>update('address',v)}/>
-          <Text style={s.label}>Contact group</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:14}}><Pressable onPress={()=>update('group_id',null)} style={[s.chip, !form.group_id&&s.chipActive]}><Text style={[s.chipText,!form.group_id&&s.chipTextActive]}>None</Text></Pressable>{groups.map(g=><Pressable key={g.id} onPress={()=>update('group_id',String(g.id))} style={[s.chip,{marginLeft:7},String(form.group_id)===String(g.id)&&s.chipActive]}><Text style={[s.chipText,String(form.group_id)===String(g.id)&&s.chipTextActive]}>{g.name}</Text></Pressable>)}</ScrollView>
+          <Text style={s.label}>Contact groups (select any number)</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom:14}}><Pressable onPress={()=>update('group_ids',[])} style={[s.chip,!(form.group_ids||[]).length&&s.chipActive]}><Text style={[s.chipText,!(form.group_ids||[]).length&&s.chipTextActive]}>None</Text></Pressable>{groups.map(g=>{const active=(form.group_ids||[]).includes(String(g.id));return <Pressable key={g.id} onPress={()=>toggleContactGroup(g.id)} style={[s.chip,{marginLeft:7},active&&s.chipActive]}><Text style={[s.chipText,active&&s.chipTextActive]}>{active?'✓ ':''}{g.name}</Text></Pressable>;})}</ScrollView>
           <Field styles={s} label="Notes" value={form.notes} onChangeText={v=>update('notes',v)} multiline/>
           <Pressable style={s.favoriteToggle} onPress={()=>update('favorite',!form.favorite)}><Ionicons name={form.favorite?'heart':'heart-outline'} size={21} color="#EF476F"/><Text style={s.contactName}>Add to favorites</Text><View style={{flex:1}}/><Ionicons name={form.favorite?'checkbox':'square-outline'} size={22} color={C.blue}/></Pressable>
           <PrimaryButton styles={s} title={form.id?'Save changes':'Save contact'} onPress={submitContact}/>
