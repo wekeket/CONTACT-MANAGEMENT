@@ -23,10 +23,22 @@ export async function getDatabase() {
         updated_at TEXT NOT NULL,
         deleted_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS contact_groups (
+        contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+        group_id INTEGER NOT NULL REFERENCES groups_table(id) ON DELETE CASCADE,
+        PRIMARY KEY (contact_id, group_id)
+      );
       CREATE TABLE IF NOT EXISTS groups_table (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         description TEXT NOT NULL DEFAULT ''
+      );
+    `);
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS contact_groups (
+        contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+        group_id INTEGER NOT NULL REFERENCES groups_table(id) ON DELETE CASCADE,
+        PRIMARY KEY (contact_id, group_id)
       );
     `);
     const columns = await db.getAllAsync('PRAGMA table_info(contacts)');
@@ -49,11 +61,10 @@ export async function getDatabase() {
 
 export async function listContacts({ search = '', favorite = false, groupId = null } = {}) {
   const database = await getDatabase();
-  const query = `SELECT c.*, g.name AS group_name FROM contacts c
-    LEFT JOIN groups_table g ON g.id = c.group_id
+  const query = `SELECT c.*, (SELECT GROUP_CONCAT(g.name, ', ') FROM contact_groups cg JOIN groups_table g ON g.id=cg.group_id WHERE cg.contact_id=c.id) AS group_name
     WHERE c.deleted_at IS NULL AND (? = '' OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)
     AND (? = 0 OR c.favorite = 1)
-    AND (? IS NULL OR c.group_id = ?)
+    AND (? IS NULL OR EXISTS (SELECT 1 FROM contact_groups cg WHERE cg.contact_id=c.id AND cg.group_id=?))
     ORDER BY c.first_name COLLATE NOCASE, c.last_name COLLATE NOCASE`;
   const term = `%${search.trim()}%`;
   return database.getAllAsync(query, search.trim(), term, term, term, term, favorite ? 1 : 0, groupId, groupId);
@@ -66,18 +77,26 @@ export async function saveContact(contact) {
     contact.first_name.trim(), contact.last_name.trim(), contact.phone.trim(),
     contact.email.trim(), contact.address.trim(), contact.company.trim(),
     contact.job_title.trim(), contact.notes.trim(), contact.favorite ? 1 : 0,
-    contact.group_id ? Number(contact.group_id) : null, now
+    null, now
   ];
   if (contact.id) {
     await database.runAsync(`UPDATE contacts SET first_name=?, last_name=?, phone=?, email=?,
       address=?, company=?, job_title=?, notes=?, favorite=?, group_id=?, updated_at=?, deleted_at=NULL WHERE id=?`,
       ...values, contact.id);
+    await database.runAsync('DELETE FROM contact_groups WHERE contact_id=?', contact.id);
+    for (const groupId of (contact.group_ids || (contact.group_id ? [contact.group_id] : []))) {
+      await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', contact.id, Number(groupId));
+    }
     return contact.id;
   }
   const result = await database.runAsync(`INSERT INTO contacts
     (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, ...values, now);
-  return result.lastInsertRowId;
+  const contactId = result.lastInsertRowId;
+  for (const groupId of (contact.group_ids || (contact.group_id ? [contact.group_id] : []))) {
+    await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', contactId, Number(groupId));
+  }
+  return contactId;
 }
 
 export async function deleteContact(id) {
@@ -105,8 +124,8 @@ export async function permanentlyDeleteContact(id) {
 
 export async function listGroups() {
   const database = await getDatabase();
-  return database.getAllAsync(`SELECT g.*, COUNT(c.id) AS member_count FROM groups_table g
-    LEFT JOIN contacts c ON c.group_id = g.id GROUP BY g.id ORDER BY g.name COLLATE NOCASE`);
+  return database.getAllAsync(`SELECT g.*, COUNT(cg.contact_id) AS member_count FROM groups_table g
+    LEFT JOIN contact_groups cg ON cg.group_id = g.id GROUP BY g.id ORDER BY g.name COLLATE NOCASE`);
 }
 
 export async function saveGroup(name, id = null, description = '') {
@@ -117,6 +136,7 @@ export async function saveGroup(name, id = null, description = '') {
 
 export async function deleteGroup(id) {
   const database = await getDatabase();
+  await database.runAsync('DELETE FROM contact_groups WHERE group_id=?', id);
   await database.runAsync('UPDATE contacts SET group_id=NULL WHERE group_id=?', id);
   await database.runAsync('DELETE FROM groups_table WHERE id=?', id);
 }
@@ -125,11 +145,12 @@ export async function exportData() {
   const database = await getDatabase();
   const contacts = await database.getAllAsync('SELECT * FROM contacts');
   const groups = await database.getAllAsync('SELECT * FROM groups_table');
-  return { schemaVersion: 2, exportedAt: new Date().toISOString(), contacts, groups };
+  const memberships = await database.getAllAsync('SELECT contact_id, group_id FROM contact_groups');
+  return { schemaVersion: 3, memberships, exportedAt: new Date().toISOString(), contacts, groups };
 }
 
 export async function importData(data) {
-  if (!data || ![1, 2].includes(data.schemaVersion) || !Array.isArray(data.contacts) || !Array.isArray(data.groups)) {
+  if (!data || ![1, 2, 3].includes(data.schemaVersion) || !Array.isArray(data.contacts) || !Array.isArray(data.groups)) {
     throw new Error('This is not a valid Contact Manager backup.');
   }
   const database = await getDatabase();
@@ -142,20 +163,30 @@ export async function importData(data) {
     const groupMap = new Map(groups.map(group => [group.name, group.id]));
     for (const contact of data.contacts) {
       if (typeof contact.first_name !== 'string' || !contact.first_name.trim()) continue;
-      const groupId = data.groups.find(group => group.id === contact.group_id);
-      const mappedGroup = groupId ? groupMap.get(groupId.name) ?? null : null;
+      const legacyGroup = data.groups.find(group => group.id === contact.group_id);
+      const mappedGroup = legacyGroup ? groupMap.get(legacyGroup.name) ?? null : null;
       const duplicate = await database.getFirstAsync(
         'SELECT id FROM contacts WHERE first_name=? AND last_name=? AND phone=? LIMIT 1',
         contact.first_name, contact.last_name || '', contact.phone || ''
       );
       if (duplicate) continue;
       const now = new Date().toISOString();
-      await database.runAsync(`INSERT INTO contacts
+      const inserted = await database.runAsync(`INSERT INTO contacts
         (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at,deleted_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         contact.first_name, contact.last_name || '', contact.phone || '', contact.email || '',
         contact.address || '', contact.company || '', contact.job_title || '', contact.notes || '',
         contact.favorite ? 1 : 0, mappedGroup, contact.created_at || now, now, contact.deleted_at || null);
+      const newContactId = inserted.lastInsertRowId;
+      if (mappedGroup) await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', newContactId, mappedGroup);
+      if (Array.isArray(data.memberships)) {
+        const oldContact = data.contacts.find(c => c.id === contact.id);
+        for (const membership of data.memberships.filter(m => m.contact_id === oldContact?.id)) {
+          const oldGroup = data.groups.find(g => g.id === membership.group_id);
+          const newGroup = oldGroup ? groupMap.get(oldGroup.name) : null;
+          if (newGroup) await database.runAsync('INSERT OR IGNORE INTO contact_groups (contact_id,group_id) VALUES (?,?)', newContactId, newGroup);
+        }
+      }
     }
   });
 }
