@@ -5,8 +5,26 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "splash": { "backgroundColor": "#F5F7FB" },
-    "android": { "package": "com.contactmanager.app", "adaptiveIcon": { "backgroundColor": "#2563EB" } },
-    "plugins": ["expo-sqlite", "expo-document-picker"]
+    "splash": {
+      "backgroundColor": "#F5F7FB"
+    },
+    "android": {
+      "package": "com.contactmanager.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#2563EB"
+      }
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Contact Manager to choose a picture for a contact.",
+          "cameraPermission": "Allow Contact Manager to take a picture for a contact.",
+          "microphonePermission": false
+        }
+      ]
+    ]
   }
 }
