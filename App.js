@@ -44,6 +44,7 @@ export default function App() {
   const [selected,setSelected] = useState(null);
   const [form,setForm] = useState(emptyForm);
   const [groupName,setGroupName] = useState('');
+  const [editingGroupId,setEditingGroupId] = useState(null);
   const [sortRecent,setSortRecent] = useState(false);
 
   const refresh = async () => {
@@ -68,7 +69,7 @@ export default function App() {
   const confirmDelete = c => Alert.alert('Delete contact?',`Delete ${c.first_name} ${c.last_name}?`,[{text:'Cancel',style:'cancel'},{text:'Delete',style:'destructive',onPress:async()=>{await deleteContact(c.id);setSelected(null);setModal(null);refresh();}}]);
   const addGroup = async () => {
     if (!groupName.trim()) return;
-    try { await saveGroup(groupName); setGroupName(''); refresh(); }
+    try { await saveGroup(groupName, editingGroupId); setGroupName(''); setEditingGroupId(null); refresh(); }
     catch(e) { Alert.alert('Group not saved','A group with that name may already exist.'); }
   };
   const backup = async () => {
@@ -118,8 +119,8 @@ export default function App() {
       <FlatList data={visibleContacts} keyExtractor={item=>String(item.id)} contentContainerStyle={{paddingHorizontal:20,paddingBottom:110}} ListHeaderComponent={<Text style={s.sectionLabel}>{tab==='Favorites'?'FAVORITE CONTACTS':'ALL CONTACTS'} · {visibleContacts.length}</Text>} ListEmptyComponent={<View style={s.empty}><Ionicons name="people-outline" size={42} color="#AAB2C0"/><Text style={s.emptyTitle}>No contacts yet</Text><Text style={s.emptyText}>Add a contact to get started.</Text><PrimaryButton title="Add contact" icon="add" onPress={openNew}/></View>} renderItem={({item})=><ContactRow item={item} onPress={()=>openContact(item)} onFavorite={()=>toggleFavorite(item)}/>} />
     </> : tab==='Groups' ? <ScrollView contentContainerStyle={s.page}>
       <Text style={s.helper}>Organize people into groups to find them faster.</Text>
-      <View style={s.groupCreate}><TextInput value={groupName} onChangeText={setGroupName} placeholder="New group name" style={[s.input,{flex:1,marginBottom:0}]}/><Pressable onPress={addGroup} style={s.addGroup}><Ionicons name="add" size={22} color="white"/></Pressable></View>
-      {groups.map(g=><Pressable key={g.id} style={s.groupRow} onPress={()=>{setFilterGroup(g.id);setFavoriteOnly(false);setTab('Contacts')}}><View style={s.groupIcon}><Ionicons name="people" size={20} color={C.blue}/></View><View style={{flex:1}}><Text style={s.contactName}>{g.name}</Text><Text style={s.contactSub}>{g.member_count} members</Text></View><Ionicons name="chevron-forward" size={18} color={C.muted}/><Pressable hitSlop={10} onPress={()=>Alert.alert('Delete group?',`Remove the group “${g.name}”? Contacts will remain saved.`,[{text:'Cancel',style:'cancel'},{text:'Delete',style:'destructive',onPress:async()=>{await deleteGroup(g.id);refresh();}}])}><Ionicons name="trash-outline" color={C.red} size={18} style={{marginLeft:14}}/></Pressable></Pressable>)}
+      <View style={s.groupCreate}><TextInput value={groupName} onChangeText={setGroupName} placeholder="New group name" style={[s.input,{flex:1,marginBottom:0}]}/><Pressable onPress={addGroup} style={s.addGroup}><Ionicons name={editingGroupId?'checkmark':'add'} size={22} color="white"/></Pressable></View>
+      {groups.map(g=><Pressable key={g.id} style={s.groupRow} onPress={()=>{setFilterGroup(g.id);setFavoriteOnly(false);setTab('Contacts')}}><View style={s.groupIcon}><Ionicons name="people" size={20} color={C.blue}/></View><View style={{flex:1}}><Text style={s.contactName}>{g.name}</Text><Text style={s.contactSub}>{g.member_count} members</Text></View><Pressable hitSlop={10} onPress={()=>{setGroupName(g.name);setEditingGroupId(g.id);}}><Ionicons name="create-outline" color={C.blue} size={19} style={{marginRight:12}}/></Pressable><Ionicons name="chevron-forward" size={18} color={C.muted}/><Pressable hitSlop={10} onPress={()=>Alert.alert('Delete group?',`Remove the group “${g.name}”? Contacts will remain saved.`,[{text:'Cancel',style:'cancel'},{text:'Delete',style:'destructive',onPress:async()=>{await deleteGroup(g.id);refresh();}}])}><Ionicons name="trash-outline" color={C.red} size={18} style={{marginLeft:14}}/></Pressable></Pressable>)}
     </ScrollView> : <ScrollView contentContainerStyle={s.page}>
       <Text style={s.sectionLabel}>DATA & PREFERENCES</Text>
       <View style={s.settingCard}><Action icon="cloud-download-outline" label="Back up contacts" onPress={backup}/><View style={s.divider}/><Action icon="cloud-upload-outline" label="Restore from backup" onPress={restore}/></View>
