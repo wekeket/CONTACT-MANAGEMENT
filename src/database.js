@@ -1,0 +1,134 @@
+import * as SQLite from 'expo-sqlite';
+
+let db;
+
+export async function getDatabase() {
+  if (!db) {
+    db = await SQLite.openDatabaseAsync('contacts.db');
+    await db.execAsync(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS contacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '',
+        address TEXT NOT NULL DEFAULT '',
+        company TEXT NOT NULL DEFAULT '',
+        job_title TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        favorite INTEGER NOT NULL DEFAULT 0,
+        group_id INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS groups_table (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT ''
+      );
+    `);
+    const count = await db.getFirstAsync('SELECT COUNT(*) AS count FROM groups_table');
+    if (!count?.count) {
+      for (const name of ['Family', 'Friends', 'Work', 'School']) {
+        await db.runAsync('INSERT OR IGNORE INTO groups_table (name) VALUES (?)', name);
+      }
+    }
+  }
+  return db;
+}
+
+export async function listContacts({ search = '', favorite = false, groupId = null } = {}) {
+  const database = await getDatabase();
+  const query = `SELECT c.*, g.name AS group_name FROM contacts c
+    LEFT JOIN groups_table g ON g.id = c.group_id
+    WHERE (? = '' OR c.first_name LIKE ? OR c.last_name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)
+    AND (? = 0 OR c.favorite = 1)
+    AND (? IS NULL OR c.group_id = ?)
+    ORDER BY c.first_name COLLATE NOCASE, c.last_name COLLATE NOCASE`;
+  const term = `%${search.trim()}%`;
+  return database.getAllAsync(query, search.trim(), term, term, term, term, favorite ? 1 : 0, groupId, groupId);
+}
+
+export async function saveContact(contact) {
+  const database = await getDatabase();
+  const now = new Date().toISOString();
+  const values = [
+    contact.first_name.trim(), contact.last_name.trim(), contact.phone.trim(),
+    contact.email.trim(), contact.address.trim(), contact.company.trim(),
+    contact.job_title.trim(), contact.notes.trim(), contact.favorite ? 1 : 0,
+    contact.group_id ? Number(contact.group_id) : null, now
+  ];
+  if (contact.id) {
+    await database.runAsync(`UPDATE contacts SET first_name=?, last_name=?, phone=?, email=?,
+      address=?, company=?, job_title=?, notes=?, favorite=?, group_id=?, updated_at=? WHERE id=?`,
+      ...values, contact.id);
+    return contact.id;
+  }
+  const result = await database.runAsync(`INSERT INTO contacts
+    (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, ...values, now);
+  return result.lastInsertRowId;
+}
+
+export async function deleteContact(id) {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM contacts WHERE id = ?', id);
+}
+
+export async function listGroups() {
+  const database = await getDatabase();
+  return database.getAllAsync(`SELECT g.*, COUNT(c.id) AS member_count FROM groups_table g
+    LEFT JOIN contacts c ON c.group_id = g.id GROUP BY g.id ORDER BY g.name COLLATE NOCASE`);
+}
+
+export async function saveGroup(name, id = null, description = '') {
+  const database = await getDatabase();
+  if (id) await database.runAsync('UPDATE groups_table SET name=?, description=? WHERE id=?', name.trim(), description, id);
+  else await database.runAsync('INSERT INTO groups_table (name, description) VALUES (?,?)', name.trim(), description);
+}
+
+export async function deleteGroup(id) {
+  const database = await getDatabase();
+  await database.runAsync('UPDATE contacts SET group_id=NULL WHERE group_id=?', id);
+  await database.runAsync('DELETE FROM groups_table WHERE id=?', id);
+}
+
+export async function exportData() {
+  const database = await getDatabase();
+  const contacts = await database.getAllAsync('SELECT * FROM contacts');
+  const groups = await database.getAllAsync('SELECT * FROM groups_table');
+  return { schemaVersion: 1, exportedAt: new Date().toISOString(), contacts, groups };
+}
+
+export async function importData(data) {
+  if (!data || data.schemaVersion !== 1 || !Array.isArray(data.contacts) || !Array.isArray(data.groups)) {
+    throw new Error('This is not a valid Contact Manager backup.');
+  }
+  const database = await getDatabase();
+  await database.withTransactionAsync(async () => {
+    for (const group of data.groups) {
+      if (typeof group.name !== 'string' || !group.name.trim()) continue;
+      await database.runAsync('INSERT OR IGNORE INTO groups_table (name, description) VALUES (?,?)', group.name, group.description || '');
+    }
+    const groups = await database.getAllAsync('SELECT id, name FROM groups_table');
+    const groupMap = new Map(groups.map(group => [group.name, group.id]));
+    for (const contact of data.contacts) {
+      if (typeof contact.first_name !== 'string' || !contact.first_name.trim()) continue;
+      const groupId = data.groups.find(group => group.id === contact.group_id);
+      const mappedGroup = groupId ? groupMap.get(groupId.name) ?? null : null;
+      const duplicate = await database.getFirstAsync(
+        'SELECT id FROM contacts WHERE first_name=? AND last_name=? AND phone=? LIMIT 1',
+        contact.first_name, contact.last_name || '', contact.phone || ''
+      );
+      if (duplicate) continue;
+      const now = new Date().toISOString();
+      await database.runAsync(`INSERT INTO contacts
+        (first_name,last_name,phone,email,address,company,job_title,notes,favorite,group_id,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        contact.first_name, contact.last_name || '', contact.phone || '', contact.email || '',
+        contact.address || '', contact.company || '', contact.job_title || '', contact.notes || '',
+        contact.favorite ? 1 : 0, mappedGroup, contact.created_at || now, now);
+    }
+  });
+}
