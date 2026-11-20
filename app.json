@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Contact Manager",
+    "slug": "contact-manager",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": { "backgroundColor": "#F5F7FB" },
+    "android": { "package": "com.contactmanager.app", "adaptiveIcon": { "backgroundColor": "#2563EB" } },
+    "plugins": ["expo-sqlite", "expo-document-picker"]
+  }
+}
