@@ -22,6 +22,12 @@ Calling, texting, and emailing use the phone's Android apps and may require cell
 - JSON backup export and restore
 - Persistent local SQLite database
 
+## Expo SDK
+
+This project targets Expo SDK 58. Keep Expo, React, React Native, and Expo native modules aligned. After pulling dependency changes, run `npx expo install --fix` and `npx expo-doctor` before starting Metro.
+
+The local SQLite database is named `contacts.db`. The SDK upgrade does not require deleting or recreating it. Keep the app slug and Android package identifier unchanged, do not clear app data, and export a JSON backup from Settings before upgrading as a precaution.
+
 ## Requirements
 
 - Node.js LTS
